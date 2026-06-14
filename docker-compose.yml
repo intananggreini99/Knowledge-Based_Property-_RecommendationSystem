@@ -1,0 +1,30 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: proprec-db
+    environment:
+      POSTGRES_DB: proprec
+      POSTGRES_USER: proprec
+      POSTGRES_PASSWORD: proprec123
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: ./backend
+    container_name: proprec-api
+    environment:
+      DATABASE_URL: postgresql+psycopg2://proprec:proprec123@db:5432/proprec
+      PROCESSED_DATA_PATH: /app/data/processed/properties_merged_cleaned.csv
+      CORS_ORIGINS: "*"
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+
+volumes:
+  pgdata:

@@ -1,0 +1,704 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rumaku — Evaluasi Model Rekomendasi</title>
+  <meta name="description" content="Ukur kualitas sistem rekomendasi properti dengan NDCG, Precision, Recall, F1, dan tingkat pemenuhan syarat." />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            canvas: '#F7F4EF',
+            surface: '#FFFFFF',
+            ink: '#1B2A26',
+            brand: { DEFAULT: '#14564C', 700: '#0F4339', 900: '#0A2F28' },
+            sage: '#E4EDE9',
+            gold: { DEFAULT: '#B8893B', soft: '#F0E6D2' },
+            line: '#E6DFD3',
+            muted: '#6B7C76',
+          },
+          fontFamily: {
+            display: ['Fraunces', 'ui-serif', 'Georgia', 'serif'],
+            sans: ['"Plus Jakarta Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+            mono: ['"Space Grotesk"', 'ui-monospace', 'monospace'],
+          },
+          boxShadow: {
+            card: '0 1px 2px rgba(27,42,38,0.05), 0 18px 40px -28px rgba(27,42,38,0.35)',
+            lift: '0 26px 60px -30px rgba(20,86,76,0.50)',
+          },
+          borderRadius: { '4xl': '2rem' },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    :root {
+      --brand: #14564C; --gold: #B8893B; --sage: #E4EDE9;
+      --ink: #1B2A26; --line: #E6DFD3; --muted: #6B7C76; --canvas: #F7F4EF;
+    }
+    html { scroll-behavior: smooth; }
+    body { font-family: "Plus Jakarta Sans", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    .font-display { font-feature-settings: "ss01" 1; }
+
+    /* subtle architectural grid wash behind hero */
+    .blueprint {
+      background-image:
+        linear-gradient(rgba(20,86,76,0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(20,86,76,0.05) 1px, transparent 1px);
+      background-size: 28px 28px;
+      mask-image: radial-gradient(120% 90% at 80% 0%, #000 35%, transparent 78%);
+      -webkit-mask-image: radial-gradient(120% 90% at 80% 0%, #000 35%, transparent 78%);
+    }
+
+    .field { width: 100%; border-radius: 0.9rem; border: 1px solid var(--line);
+      background: #FFFFFF; padding: 0.7rem 0.85rem; color: var(--ink);
+      font-size: 0.9rem; transition: border-color .15s ease, box-shadow .15s ease; }
+    .field::placeholder { color: #9AA8A2; }
+    .field:hover { border-color: #CFC6B6; }
+    .field:focus { outline: none; border-color: var(--brand);
+      box-shadow: 0 0 0 3px rgba(20,86,76,0.14); }
+    select.field { appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236B7C76' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 0.7rem center; padding-right: 2rem; }
+
+    .eyebrow { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.28em;
+      text-transform: uppercase; color: var(--brand); }
+    .chip { display: inline-flex; align-items: center; gap: .35rem;
+      border-radius: 9999px; border: 1px solid var(--line); background: #FFFFFF;
+      padding: .28rem .7rem; font-size: .74rem; font-weight: 600; color: #3C4D48; }
+
+    /* range slider */
+    input[type=range] { -webkit-appearance: none; appearance: none; height: 6px;
+      border-radius: 9999px; background: var(--sage); outline: none; }
+    input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
+      width: 20px; height: 20px; border-radius: 50%; background: var(--brand);
+      border: 3px solid #fff; box-shadow: 0 2px 6px rgba(20,86,76,.4); cursor: pointer; }
+    input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%;
+      background: var(--brand); border: 3px solid #fff; cursor: pointer; }
+
+    .focus-ring:focus-visible { outline: 3px solid rgba(20,86,76,.45); outline-offset: 2px; border-radius: 0.9rem; }
+
+    .reveal { opacity: 0; transform: translateY(14px); animation: rise .55s cubic-bezier(.2,.7,.2,1) forwards; }
+    @keyframes rise { to { opacity: 1; transform: none; } }
+
+    .skeleton { background: linear-gradient(100deg, #efeadf 30%, #f6f2ea 50%, #efeadf 70%);
+      background-size: 220% 100%; animation: shimmer 1.3s infinite linear; }
+    @keyframes shimmer { to { background-position: -220% 0; } }
+
+    ::-webkit-scrollbar { width: 11px; height: 11px; }
+    ::-webkit-scrollbar-thumb { background: #d8d0c2; border-radius: 9999px; border: 3px solid var(--canvas); }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .reveal { animation: none; opacity: 1; transform: none; }
+      .skeleton { animation: none; }
+      * { transition: none !important; }
+    }
+  </style>
+</head>
+
+<body class="bg-canvas text-ink antialiased">
+
+  <!-- ============ NAV (shared, identik dgn index.html) ============ -->
+  <header class="sticky top-0 z-30 border-b border-line/80 bg-canvas/85 backdrop-blur">
+    <nav class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3.5 sm:px-6">
+      <a data-nav="rekomendasi" href="/" class="group flex items-center gap-2.5 focus-ring">
+        <span class="grid h-9 w-9 place-items-center rounded-xl bg-brand text-canvas shadow-sm">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v9h14v-9"/><path d="M10 19v-5h4v5"/></svg>
+        </span>
+        <span class="leading-tight">
+          <span class="block font-display text-lg font-600 tracking-tight">Rumaku</span>
+          <span class="block text-[0.62rem] font-600 uppercase tracking-[0.22em] text-muted">Property Recommender</span>
+        </span>
+      </a>
+
+      <div class="flex items-center gap-1.5 rounded-full border border-line bg-surface p-1 shadow-sm">
+        <a data-nav="rekomendasi" href="/" class="rounded-full px-4 py-1.5 text-sm font-600 text-muted transition hover:text-ink focus-ring">Rekomendasi</a>
+        <a data-nav="evaluasi" href="/evaluation" class="rounded-full bg-brand px-4 py-1.5 text-sm font-600 text-canvas">Evaluasi Model</a>
+      </div>
+
+      <div id="modeBadge" class="hidden items-center gap-2 rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-600 text-muted sm:flex">
+        <span id="modeDot" class="h-2 w-2 rounded-full bg-muted"></span>
+        <span id="modeText">Memeriksa…</span>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ============ HERO ============ -->
+    <section class="relative overflow-hidden border-b border-line">
+      <div class="blueprint pointer-events-none absolute inset-0"></div>
+      <div class="relative mx-auto grid max-w-7xl gap-10 px-4 py-12 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] lg:items-center lg:py-16">
+
+        <div class="reveal">
+          <p class="eyebrow">Evaluasi offline berbasis query</p>
+          <h1 class="mt-3 font-display text-[2.5rem] font-600 leading-[1.05] tracking-tight sm:text-6xl">
+            Seberapa <span class="text-brand italic">baik</span> rekomendasi kami
+            sebenarnya?
+          </h1>
+          <p class="mt-5 max-w-xl text-base leading-relaxed text-muted sm:text-lg">
+            Kami menguji mesin terhadap ratusan query sintetis, lalu mengukur mutu
+            urutan hasil dan kepatuhannya pada syarat wajib. Semua metrik bernilai
+            0 sampai 1 — makin tinggi makin baik.
+          </p>
+
+          <!-- evaluasi adalah proses berurutan -> penanda bernomor bermakna -->
+          <ol class="mt-8 grid gap-3 sm:grid-cols-3">
+            <li class="rounded-2xl border border-line bg-surface/70 p-4">
+              <span class="font-mono text-sm font-700 text-gold">01</span>
+              <p class="mt-1.5 text-sm font-700">Susun query uji</p>
+              <p class="mt-1 text-xs leading-relaxed text-muted">Sampel preferensi dari data nyata.</p>
+            </li>
+            <li class="rounded-2xl border border-line bg-surface/70 p-4">
+              <span class="font-mono text-sm font-700 text-gold">02</span>
+              <p class="mt-1.5 text-sm font-700">Jalankan rekomendasi</p>
+              <p class="mt-1 text-xs leading-relaxed text-muted">Ambil top-K untuk tiap query.</p>
+            </li>
+            <li class="rounded-2xl border border-line bg-surface/70 p-4">
+              <span class="font-mono text-sm font-700 text-gold">03</span>
+              <p class="mt-1.5 text-sm font-700">Hitung metrik</p>
+              <p class="mt-1 text-xs leading-relaxed text-muted">Rata-rata seluruh query.</p>
+            </li>
+          </ol>
+
+          <div class="mt-8 flex flex-wrap items-center gap-3">
+            <a href="#ukur" class="inline-flex items-center gap-2 rounded-full bg-brand px-6 py-3 text-sm font-700 text-canvas shadow-lift transition hover:bg-brand-700 focus-ring">
+              Jalankan evaluasi
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+            </a>
+            <a href="#metodologi" class="inline-flex items-center gap-2 rounded-full border border-line bg-surface px-6 py-3 text-sm font-700 text-ink transition hover:border-brand/40 focus-ring">
+              Lihat metodologi
+            </a>
+          </div>
+        </div>
+
+        <!-- preview kartu: ring NDCG sebagai "match meter" faktual -->
+        <div class="reveal" style="animation-delay:.08s">
+          <div class="relative mx-auto max-w-md rounded-4xl border border-line bg-surface p-6 shadow-card sm:p-8">
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="eyebrow">Skor keseluruhan</p>
+                <p class="mt-1 font-display text-xl font-600">Kualitas peringkat</p>
+              </div>
+              <span class="chip"><span class="h-1.5 w-1.5 rounded-full bg-gold"></span> NDCG</span>
+            </div>
+            <div class="mt-6 flex items-center gap-5">
+              <div id="heroRing" class="shrink-0"></div>
+              <div class="min-w-0">
+                <p class="text-sm leading-relaxed text-muted">
+                  NDCG menilai apakah properti paling relevan muncul di urutan
+                  teratas — bukan sekadar ada di daftar.
+                </p>
+                <div id="heroStat" class="mt-3 inline-flex items-center gap-2 rounded-full bg-sage px-3 py-1 text-xs font-600 text-brand-700">
+                  <span class="h-1.5 w-1.5 rounded-full bg-brand"></span> Menyiapkan angka…
+                </div>
+              </div>
+            </div>
+            <div class="mt-6 grid grid-cols-3 gap-2 border-t border-line pt-5 text-center">
+              <div>
+                <p id="hP" class="font-mono text-lg font-700 text-ink">—</p>
+                <p class="text-[0.68rem] font-600 uppercase tracking-wider text-muted">Precision</p>
+              </div>
+              <div>
+                <p id="hR" class="font-mono text-lg font-700 text-ink">—</p>
+                <p class="text-[0.68rem] font-600 uppercase tracking-wider text-muted">Recall</p>
+              </div>
+              <div>
+                <p id="hF" class="font-mono text-lg font-700 text-ink">—</p>
+                <p class="text-[0.68rem] font-600 uppercase tracking-wider text-muted">F1</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ============ KONTROL + METRIK ============ -->
+    <section id="ukur" class="mx-auto max-w-7xl scroll-mt-20 px-4 py-12 sm:px-6 lg:py-16">
+      <div class="grid gap-8 lg:grid-cols-[320px_1fr]">
+
+        <!-- panel kontrol (sticky) -->
+        <aside class="lg:sticky lg:top-24 lg:self-start">
+          <form id="evalForm" class="rounded-4xl border border-line bg-surface p-5 shadow-card sm:p-6">
+            <div class="flex items-center justify-between">
+              <h2 class="font-display text-xl font-600">Parameter uji</h2>
+              <span class="chip"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg> Offline</span>
+            </div>
+            <p class="mt-1.5 text-sm leading-relaxed text-muted">
+              Atur seberapa banyak query uji dan berapa hasil teratas yang dinilai.
+            </p>
+
+            <div class="mt-6 space-y-6">
+              <div>
+                <div class="flex items-baseline justify-between">
+                  <label for="sample_size" class="text-sm font-700">Jumlah query uji</label>
+                  <span id="ssLabel" class="font-mono text-sm font-700 text-brand">100</span>
+                </div>
+                <input id="sample_size" type="range" min="20" max="300" step="20" value="100" class="mt-3 w-full" />
+                <div class="mt-1.5 flex justify-between text-[0.68rem] font-600 text-muted">
+                  <span>20</span><span>lebih cepat ↔ lebih stabil</span><span>300</span>
+                </div>
+              </div>
+
+              <div>
+                <div class="flex items-baseline justify-between">
+                  <label for="top_k" class="text-sm font-700">Top-K dinilai</label>
+                  <span id="tkLabel" class="font-mono text-sm font-700 text-brand">10</span>
+                </div>
+                <input id="top_k" type="range" min="1" max="20" step="1" value="10" class="mt-3 w-full" />
+                <p class="mt-1.5 text-[0.68rem] font-600 text-muted">Banyak hasil teratas yang diperhitungkan per query.</p>
+              </div>
+            </div>
+
+            <div class="mt-7 flex gap-2.5">
+              <button id="runBtn" type="submit"
+                class="inline-flex flex-1 items-center justify-center gap-2 rounded-full bg-brand px-5 py-3 text-sm font-700 text-canvas shadow-lift transition hover:bg-brand-700 focus-ring">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                Jalankan evaluasi
+              </button>
+            </div>
+
+            <div class="mt-5 rounded-2xl border border-line bg-canvas/60 p-4">
+              <p class="text-[0.7rem] font-700 uppercase tracking-wider text-muted">Cara membaca</p>
+              <p class="mt-1.5 text-xs leading-relaxed text-muted">
+                Cincin <span class="font-700 text-gold">emas</span> = metrik mutu peringkat (NDCG).
+                Cincin <span class="font-700 text-brand">hijau</span> = metrik kepatuhan &amp; relevansi.
+                Skala 0–1, makin tinggi makin baik.
+              </p>
+            </div>
+          </form>
+        </aside>
+
+        <!-- area hasil metrik -->
+        <div>
+          <div class="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <p class="eyebrow">Ringkasan metrik</p>
+              <h2 class="mt-1 font-display text-2xl font-600 sm:text-3xl">Hasil evaluasi</h2>
+            </div>
+            <p id="evalMeta" class="text-sm text-muted">Tekan “Jalankan evaluasi” untuk menghitung metrik.</p>
+          </div>
+
+          <!-- pita konteks sampel -->
+          <div id="contextBar" class="mt-4 hidden flex-wrap items-center gap-2 rounded-2xl border border-line bg-surface px-4 py-3 text-xs font-600 text-muted">
+          </div>
+
+          <!-- error state -->
+          <div id="errorState" class="mt-5 hidden rounded-4xl border border-gold/40 bg-gold-soft/50 p-6 text-center">
+            <p class="font-700 text-ink">Tidak bisa memuat evaluasi dari API.</p>
+            <p class="mt-1 text-sm text-muted">Menampilkan angka contoh berlabel ilustratif. Jalankan backend untuk hasil sesungguhnya.</p>
+          </div>
+
+          <!-- loading skeleton -->
+          <div id="loading" class="mt-5 hidden">
+            <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              <div class="h-44 rounded-4xl skeleton"></div>
+              <div class="h-44 rounded-4xl skeleton"></div>
+              <div class="h-44 rounded-4xl skeleton"></div>
+              <div class="h-44 rounded-4xl skeleton"></div>
+              <div class="h-44 rounded-4xl skeleton"></div>
+              <div class="h-44 rounded-4xl skeleton"></div>
+            </div>
+          </div>
+
+          <!-- grid 6 metric card -->
+          <div id="metricGrid" class="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3"></div>
+
+          <!-- bar chart perbandingan -->
+          <div id="chartCard" class="mt-6 hidden rounded-4xl border border-line bg-surface p-6 shadow-card sm:p-7">
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="eyebrow">Perbandingan</p>
+                <h3 class="mt-1 font-display text-xl font-600">Semua metrik berdampingan</h3>
+              </div>
+              <span class="chip">Skala 0–1</span>
+            </div>
+            <div id="barChart" class="mt-6"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ METODOLOGI ============ -->
+    <section id="metodologi" class="border-t border-line bg-surface/50">
+      <div class="mx-auto max-w-7xl scroll-mt-20 px-4 py-12 sm:px-6 lg:py-16">
+        <div class="max-w-2xl">
+          <p class="eyebrow">Metodologi</p>
+          <h2 class="mt-1 font-display text-2xl font-600 sm:text-3xl">Bagaimana angka ini dihitung</h2>
+          <p class="mt-4 text-base leading-relaxed text-muted">
+            Evaluasi bersifat <span class="font-700 text-ink">offline &amp; berbasis query</span>. Dari dataset,
+            sistem mengambil sejumlah sampel sebagai “query pengguna” sintetis. Untuk tiap query, mesin
+            mengembalikan top-K rekomendasi, lalu hasilnya dinilai terhadap properti yang dianggap relevan
+            menurut syarat query. Skor akhir adalah rata-rata seluruh query.
+          </p>
+        </div>
+
+        <div class="mt-8 grid gap-4 md:grid-cols-2">
+          <div class="rounded-4xl border border-line bg-surface p-6">
+            <h3 class="font-display text-lg font-600">Metrik mutu peringkat</h3>
+            <dl class="mt-4 space-y-4 text-sm">
+              <div>
+                <dt class="font-700 text-ink">NDCG</dt>
+                <dd class="mt-1 leading-relaxed text-muted">Menghargai sistem yang menaruh properti paling relevan di posisi teratas. Posisi penting — relevan di urutan 1 bernilai lebih dari relevan di urutan 10.</dd>
+              </div>
+              <div>
+                <dt class="font-700 text-ink">Precision</dt>
+                <dd class="mt-1 leading-relaxed text-muted">Dari hasil yang ditampilkan, berapa proporsi yang benar-benar relevan. Mengukur seberapa “bersih” daftar dari hasil meleset.</dd>
+              </div>
+              <div>
+                <dt class="font-700 text-ink">Recall</dt>
+                <dd class="mt-1 leading-relaxed text-muted">Dari semua properti relevan yang ada, berapa proporsi yang berhasil ditangkap di top-K. Mengukur seberapa lengkap cakupannya.</dd>
+              </div>
+              <div>
+                <dt class="font-700 text-ink">F1</dt>
+                <dd class="mt-1 leading-relaxed text-muted">Rata-rata harmonik Precision dan Recall — satu angka yang menyeimbangkan ketepatan dan kelengkapan.</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div class="rounded-4xl border border-line bg-surface p-6">
+            <h3 class="font-display text-lg font-600">Metrik kepatuhan &amp; relevansi</h3>
+            <dl class="mt-4 space-y-4 text-sm">
+              <div>
+                <dt class="font-700 text-ink">Constraint Satisfaction Rate (CSR)</dt>
+                <dd class="mt-1 leading-relaxed text-muted">Proporsi hasil yang mematuhi syarat wajib query — misalnya tipe properti, lokasi, dan tidak melebihi budget. Idealnya mendekati 1.</dd>
+              </div>
+              <div>
+                <dt class="font-700 text-ink">Valid Recommendation Rate (VRR)</dt>
+                <dd class="mt-1 leading-relaxed text-muted">Proporsi query yang menghasilkan setidaknya satu rekomendasi valid. Menjaga agar pengguna jarang melihat hasil kosong.</dd>
+              </div>
+              <div class="rounded-2xl bg-canvas/70 p-4">
+                <dt class="font-700 text-ink">Tentang pelonggaran</dt>
+                <dd class="mt-1 leading-relaxed text-muted">Bila syarat ketat menghasilkan terlalu sedikit kandidat, mesin melonggarkan batas secara bertahap (budget → lokasi → semua). CSR &amp; VRR membantu memantau dampak pelonggaran terhadap mutu.</dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============ FOOTER (shared) ============ -->
+  <footer class="border-t border-line bg-surface/60">
+    <div class="mx-auto flex max-w-7xl flex-col items-start justify-between gap-4 px-4 py-8 sm:flex-row sm:items-center sm:px-6">
+      <div class="flex items-center gap-2.5">
+        <span class="grid h-8 w-8 place-items-center rounded-lg bg-brand text-canvas">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v9h14v-9"/></svg>
+        </span>
+        <p class="text-sm text-muted"><span class="font-700 text-ink">Rumaku</span> — sistem rekomendasi sewa &amp; jual beli properti.</p>
+      </div>
+      <p class="text-xs text-muted">Knowledge-Based Filtering · FastAPI · PostgreSQL · TailwindCSS</p>
+    </div>
+  </footer>
+
+  <script>
+  /* ============================================================
+     Rumaku — halaman evaluasi (evaluation side)
+     Bekerja dua mode:
+       - API hidup  -> memanggil GET /api/evaluate?sample_size=&top_k=
+       - Tanpa API  -> mode demo dgn metrik ilustratif berlabel jelas
+  ============================================================ */
+  (() => {
+    const $ = (id) => document.getElementById(id);
+    const API = (location.protocol === 'file:') ? '' : location.origin;
+
+    /* ---- navigasi lintas-halaman utk mode file:// ---- */
+    const NAV_FILES = { rekomendasi: 'index.html', evaluasi: 'evaluation.html' };
+    if (location.protocol === 'file:') {
+      document.querySelectorAll('[data-nav]').forEach(a => {
+        a.setAttribute('href', NAV_FILES[a.dataset.nav]);
+      });
+    }
+
+    let DEMO = false; // ditentukan saat init
+    const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    /* ---------- util ---------- */
+    const clamp01 = (v) => Math.max(0, Math.min(1, Number(v) || 0));
+    const pctText = (v) => (clamp01(v) * 100).toFixed(1);
+
+    /* ---------- signature: ring "match meter" (identik bentuk dgn index) ---------- */
+    function ring(value, { size = 96, stroke = 9, color = 'var(--brand)' } = {}) {
+      const v = clamp01(value);
+      const r = size / 2 - stroke;
+      const c = 2 * Math.PI * r;
+      const dash = (v * c).toFixed(2);
+      const val = (v * 100).toFixed(0);
+      return `
+      <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" class="block" role="img" aria-label="Nilai ${val} dari 100">
+        <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="var(--sage)" stroke-width="${stroke}"/>
+        <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}"
+          stroke-linecap="round" stroke-dasharray="${dash} ${(c-dash).toFixed(2)}"
+          transform="rotate(-90 ${size/2} ${size/2})"/>
+        <text x="50%" y="46%" text-anchor="middle" dominant-baseline="middle"
+          font-family="Space Grotesk, monospace" font-weight="700" font-size="${size*0.22}" fill="var(--ink)">${val}</text>
+        <text x="50%" y="64%" text-anchor="middle" dominant-baseline="middle"
+          font-family="Plus Jakarta Sans, sans-serif" font-weight="600" font-size="${size*0.1}" fill="var(--muted)">/ 100</text>
+      </svg>`;
+    }
+
+    /* ---------- definisi metrik (urutan tampil) ---------- */
+    /* primary:true -> aksen GOLD (hierarchy: NDCG metrik utama) */
+    const METRICS = [
+      { key: 'ndcg', label: 'NDCG', primary: true,
+        blurb: 'Mutu urutan: relevan di posisi teratas dihargai lebih.' },
+      { key: 'precision', label: 'Precision',
+        blurb: 'Proporsi hasil tampil yang memang relevan.' },
+      { key: 'recall', label: 'Recall',
+        blurb: 'Proporsi properti relevan yang berhasil ditangkap.' },
+      { key: 'f1_score', label: 'F1 Score',
+        blurb: 'Penyeimbang Precision dan Recall dalam satu angka.' },
+      { key: 'constraint_satisfaction_rate', label: 'Constraint Satisfaction',
+        blurb: 'Hasil yang patuh pada syarat wajib query.' },
+      { key: 'valid_recommendation_rate', label: 'Valid Recommendation',
+        blurb: 'Query yang menghasilkan minimal satu hasil valid.' },
+    ];
+
+    /* ---------- metrik demo (ILUSTRATIF — bukan hasil pengujian asli) ---------- */
+    /* sedikit bervariasi mengikuti parameter agar terasa hidup, tetap dilabeli jelas */
+    function demoMetrics(sample_size, top_k) {
+      // baseline wajar utk recommender knowledge-based; recall naik dgn top_k
+      const kEff = clamp01((top_k - 1) / 19);   // 0..1 utk top_k 1..20
+      const base = {
+        ndcg: 0.78 + 0.06 * kEff,
+        precision: 0.81 - 0.10 * kEff,
+        recall: 0.55 + 0.20 * kEff,
+        constraint_satisfaction_rate: 0.93,
+        valid_recommendation_rate: 0.97,
+      };
+      // sedikit "noise" deterministik berdasar sample_size agar reproducible
+      const jitter = ((sample_size / 20) % 5) * 0.004;
+      base.ndcg = clamp01(base.ndcg + jitter);
+      base.precision = clamp01(base.precision + jitter * 0.5);
+      base.recall = clamp01(base.recall - jitter * 0.5);
+      const p = base.precision, r = base.recall;
+      base.f1_score = (p + r) ? clamp01(2 * p * r / (p + r)) : 0;
+      return {
+        sample_size, top_k,
+        ndcg: base.ndcg, precision: base.precision, recall: base.recall,
+        f1_score: base.f1_score,
+        constraint_satisfaction_rate: base.constraint_satisfaction_rate,
+        valid_recommendation_rate: base.valid_recommendation_rate,
+      };
+    }
+
+    /* ---------- kartu metrik ---------- */
+    function metricCard(m, value, illustrative) {
+      const color = m.primary ? 'var(--gold)' : 'var(--brand)';
+      const tag = m.primary
+        ? '<span class="chip"><span class="h-1.5 w-1.5 rounded-full bg-gold"></span> Metrik utama</span>'
+        : '';
+      const ringId = 'ring-' + m.key;
+      const valId = 'val-' + m.key;
+      return `
+      <article class="reveal rounded-4xl border ${m.primary ? 'border-gold/40' : 'border-line'} bg-surface p-5 shadow-card sm:p-6">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <h3 class="font-display text-lg font-600 leading-tight">${m.label}</h3>
+            <p class="mt-1 max-w-[16rem] text-xs leading-relaxed text-muted">${m.blurb}</p>
+          </div>
+          ${tag}
+        </div>
+        <div class="mt-4 flex items-center gap-4">
+          <div id="${ringId}" class="shrink-0"></div>
+          <div>
+            <p class="font-mono text-3xl font-700 leading-none ${m.primary ? 'text-gold' : 'text-ink'}">
+              <span id="${valId}">0.000</span>
+            </p>
+            <p class="mt-1 text-[0.7rem] font-600 uppercase tracking-wider text-muted">dari 1.000</p>
+            ${illustrative ? '<p class="mt-2 text-[0.66rem] font-600 text-gold">contoh ilustratif</p>' : ''}
+          </div>
+        </div>
+      </article>`;
+    }
+
+    /* ---------- animasi count-up (hormati reduced-motion) ---------- */
+    function animateValue(el, target, fmt) {
+      if (reduceMotion) { el.textContent = fmt(target); return; }
+      const dur = 750; const t0 = performance.now();
+      function step(now) {
+        const p = Math.min(1, (now - t0) / dur);
+        const eased = 1 - Math.pow(1 - p, 3);
+        el.textContent = fmt(target * eased);
+        if (p < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    }
+
+    function animateRing(holder, target, color) {
+      if (reduceMotion) { holder.innerHTML = ring(target, { color }); return; }
+      const dur = 750; const t0 = performance.now();
+      function step(now) {
+        const p = Math.min(1, (now - t0) / dur);
+        const eased = 1 - Math.pow(1 - p, 3);
+        holder.innerHTML = ring(target * eased, { color });
+        if (p < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    }
+
+    /* ---------- bar chart SVG perbandingan ---------- */
+    function renderBars(data) {
+      const rows = METRICS.map(m => ({ label: m.label, v: clamp01(data[m.key]), primary: m.primary }));
+      const W = 720, rowH = 46, padL = 188, padR = 56, top = 8;
+      const H = top * 2 + rows.length * rowH;
+      const barMax = W - padL - padR;
+      const bars = rows.map((r, i) => {
+        const y = top + i * rowH + 8;
+        const w = Math.max(2, r.v * barMax);
+        const col = r.primary ? 'var(--gold)' : 'var(--brand)';
+        const pct = (r.v * 100).toFixed(1);
+        return `
+          <g>
+            <text x="${padL - 14}" y="${y + 15}" text-anchor="end"
+              font-family="Plus Jakarta Sans, sans-serif" font-size="13" font-weight="600" fill="var(--ink)">${r.label}</text>
+            <rect x="${padL}" y="${y}" width="${barMax}" height="22" rx="11" fill="var(--sage)"/>
+            <rect class="bar" x="${padL}" y="${y}" width="${w}" height="22" rx="11" fill="${col}">
+              ${reduceMotion ? '' : `<animate attributeName="width" from="0" to="${w}" dur="0.7s" fill="freeze" calcMode="spline" keySplines="0.2 0.7 0.2 1" keyTimes="0;1"/>`}
+            </rect>
+            <text x="${padL + w + 10}" y="${y + 15}"
+              font-family="Space Grotesk, monospace" font-size="12.5" font-weight="700" fill="var(--muted)">${pct}</text>
+          </g>`;
+      }).join('');
+      // gridlines 0 / .25 / .5 / .75 / 1
+      const grid = [0, .25, .5, .75, 1].map(g => {
+        const x = padL + g * barMax;
+        return `<line x1="${x}" y1="${top - 2}" x2="${x}" y2="${H - top}" stroke="var(--line)" stroke-width="1"/>
+                <text x="${x}" y="${H - 2}" text-anchor="middle" font-family="Space Grotesk, monospace" font-size="10" fill="#9AA8A2">${g.toFixed(2)}</text>`;
+      }).join('');
+      $('barChart').innerHTML = `
+        <svg viewBox="0 0 ${W} ${H + 16}" class="w-full" role="img" aria-label="Perbandingan seluruh metrik dalam skala 0 sampai 1">
+          ${grid}
+          ${bars}
+        </svg>`;
+    }
+
+    /* ---------- render seluruh hasil ---------- */
+    function renderResults(data, illustrative) {
+      // kartu
+      const grid = $('metricGrid');
+      grid.innerHTML = METRICS.map(m => metricCard(m, data[m.key], illustrative)).join('');
+      METRICS.forEach(m => {
+        const color = m.primary ? 'var(--gold)' : 'var(--brand)';
+        animateRing($('ring-' + m.key), clamp01(data[m.key]), color);
+        animateValue($('val-' + m.key), clamp01(data[m.key]), (x) => x.toFixed(3));
+      });
+
+      // hero ringkas
+      $('heroRing').innerHTML = '';
+      animateRing($('heroRing'), clamp01(data.ndcg), 'var(--gold)');
+      $('hP').textContent = clamp01(data.precision).toFixed(3);
+      $('hR').textContent = clamp01(data.recall).toFixed(3);
+      $('hF').textContent = clamp01(data.f1_score).toFixed(3);
+      $('heroStat').innerHTML = illustrative
+        ? '<span class="h-1.5 w-1.5 rounded-full bg-gold"></span> Angka contoh — jalankan API untuk hasil asli'
+        : `<span class="h-1.5 w-1.5 rounded-full bg-brand"></span> ${data.sample_size} query · top-${data.top_k}`;
+
+      // konteks
+      const cb = $('contextBar');
+      cb.classList.remove('hidden'); cb.classList.add('flex');
+      cb.innerHTML = `
+        <span class="inline-flex items-center gap-1.5"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg> ${data.sample_size} query uji</span>
+        <span class="text-line">·</span>
+        <span>Top-K dinilai: <span class="font-700 text-ink">${data.top_k}</span></span>
+        <span class="text-line">·</span>
+        <span>${illustrative ? 'Sumber: <span class="font-700 text-gold">data contoh</span>' : 'Sumber: <span class="font-700 text-brand">API langsung</span>'}</span>`;
+
+      // chart
+      $('chartCard').classList.remove('hidden');
+      renderBars(data);
+    }
+
+    /* ---------- jalankan evaluasi (dual-mode) ---------- */
+    async function runEval() {
+      const sample_size = Number($('sample_size').value);
+      const top_k = Number($('top_k').value);
+
+      $('errorState').classList.add('hidden');
+      $('metricGrid').innerHTML = '';
+      $('chartCard').classList.add('hidden');
+      $('contextBar').classList.add('hidden');
+      $('loading').classList.remove('hidden');
+      $('evalMeta').textContent = 'Menghitung…';
+      $('runBtn').disabled = true; $('runBtn').classList.add('opacity-60');
+
+      let data = null, illustrative = DEMO, failed = false;
+      if (!DEMO && API) {
+        try {
+          const opts = (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? { signal: AbortSignal.timeout(20000) } : {};
+          const res = await fetch(`${API}/api/evaluate?sample_size=${sample_size}&top_k=${top_k}`, opts);
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          data = await res.json();
+          illustrative = false;
+        } catch (e) {
+          failed = true; illustrative = true;
+          data = demoMetrics(sample_size, top_k);
+        }
+      } else {
+        data = demoMetrics(sample_size, top_k);
+      }
+
+      // jeda kecil agar skeleton terlihat (kecuali reduced-motion)
+      await new Promise(r => setTimeout(r, reduceMotion ? 0 : 350));
+
+      $('loading').classList.add('hidden');
+      $('runBtn').disabled = false; $('runBtn').classList.remove('opacity-60');
+      if (failed) $('errorState').classList.remove('hidden');
+
+      renderResults(data, illustrative);
+      $('evalMeta').textContent = illustrative
+        ? 'Menampilkan angka contoh (ilustratif).'
+        : `Selesai · ${data.sample_size} query dievaluasi.`;
+    }
+
+    /* ---------- init: deteksi mode ---------- */
+    async function init() {
+      // ring hero awal (placeholder netral)
+      $('heroRing').innerHTML = ring(0, { color: 'var(--gold)' });
+
+      let live = false;
+      if (API) {
+        try {
+          const opts = (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? { signal: AbortSignal.timeout(2500) } : {};
+          const res = await fetch(`${API}/api/health`, opts);
+          if (res.ok) live = true;
+        } catch (_) { live = false; }
+      }
+      DEMO = !live;
+
+      $('modeBadge').classList.remove('hidden'); $('modeBadge').classList.add('flex');
+      if (live) {
+        $('modeDot').className = 'h-2 w-2 rounded-full bg-brand';
+        $('modeText').textContent = 'Terhubung API';
+      } else {
+        $('modeDot').className = 'h-2 w-2 rounded-full bg-gold';
+        $('modeText').textContent = 'Mode demo (contoh data)';
+      }
+
+      // tampilkan pratinjau metrik demo agar halaman tak kosong saat dibuka
+      renderResults(demoMetrics(Number($('sample_size').value), Number($('top_k').value)), true);
+      $('evalMeta').textContent = DEMO
+        ? 'Pratinjau angka contoh — tekan “Jalankan evaluasi”.'
+        : 'API terdeteksi — tekan “Jalankan evaluasi” untuk hasil asli.';
+    }
+
+    /* ---------- events ---------- */
+    $('evalForm').addEventListener('submit', (e) => { e.preventDefault(); runEval(); });
+    $('sample_size').addEventListener('input', (e) => $('ssLabel').textContent = e.target.value);
+    $('top_k').addEventListener('input', (e) => $('tkLabel').textContent = e.target.value);
+
+    init();
+  })();
+  </script>
+</body>
+</html>
