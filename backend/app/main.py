@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from fastapi.staticfiles import StaticFiles
 from pathlib import Path
+import os
 from time import sleep
 from typing import List
 
@@ -23,7 +25,15 @@ from .services.recommender import recommend
 from .services.evaluation import evaluate
 from .services.db_loader import load_dataframe_to_db
 
-app = FastAPI(title=settings.app_name, version=settings.app_version)
+app = FastAPI()
+
+BASE_DIR = Path(__file__).resolve().parent
+
+app.mount(
+    "/static",
+    StaticFiles(directory=str(BASE_DIR / "static")),
+    name="static"
+)
 
 if settings.cors_origins == "*":
     origins = ["*"]
@@ -82,50 +92,38 @@ def _load_or_build_dataframe() -> pd.DataFrame:
     if path.exists():
         df = pd.read_csv(path)
     else:
-        raw_dir = Path("/app/data/raw")
+        raw_dir = (
+                    Path(__file__)
+                    .resolve()
+                    .parents[2]
+                    / "data"
+                    / "raw"
+                )
         raw_dir.mkdir(parents=True, exist_ok=True)
         df = build_unified_dataset(raw_dir, output_path=path)
 
     DATAFRAME_CACHE = df
     return df
 
-
-def _wait_for_db(max_attempts: int = 20, delay_seconds: float = 2.0) -> None:
-    last_error = None
-    for _ in range(max_attempts):
-        try:
-            with engine.connect() as conn:
-                conn.execute(text("SELECT 1"))
-            return
-        except OperationalError as exc:
-            last_error = exc
-            sleep(delay_seconds)
-    raise RuntimeError(f"Database not ready after {max_attempts} attempts") from last_error
-
-
 @app.on_event("startup")
 def on_startup():
-    _wait_for_db()
-    Base.metadata.create_all(bind=engine)
 
-    df = _load_or_build_dataframe()
-    if df.empty:
-        return
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as exc:
+        print(f"DB initialization warning: {exc}")
 
-    with SessionLocal() as db:
-        count = db.query(Property).count()
-        if count == 0:
-            load_dataframe_to_db(db, df)
+    _load_or_build_dataframe()
 
 
 @app.get("/", response_class=HTMLResponse)
-def index():
+async def index():
     index_path = STATIC_DIR / "index.html"
     return index_path.read_text(encoding="utf-8")
 
 
 @app.get("/evaluation", response_class=HTMLResponse)
-def evaluation_page():
+async def evaluation_page():
     eval_path = STATIC_DIR / "evaluation.html"
     return eval_path.read_text(encoding="utf-8")
 
