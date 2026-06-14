@@ -1,119 +1,86 @@
-# Rumaku — Sistem Rekomendasi Properti
+# Sistem Rekomendasi Sewa & Jual Properti Menggunakan Pendekatan Knowledge Based
 
-Aplikasi rekomendasi rumah & apartemen berbasis *knowledge-based filtering*
-(hard constraint → soft ranking → constraint relaxation) di atas dataset berisi
-**12.946 properti**.
+![Poster Sistem Rekomendasi](PosterSistemRekomendasi.png)
 
-Repositori ini sudah disiapkan untuk **deployment terpisah**:
+Project ini membangun web app rekomendasi properti berbasis **Knowledge-Based Recommendation** dengan arsitektur:
 
-- **Frontend (Next.js)** → di-deploy ke **Vercel**
-- **Backend (FastAPI + PostgreSQL)** → di-deploy ke **Railway**
+- **Frontend**: HTML + TailwindCSS + JavaScript
+- **Backend API**: FastAPI
+- **Database**: PostgreSQL
+- **Engine rekomendasi**: Python
 
-Keduanya terhubung lewat satu environment variable (`NEXT_PUBLIC_API_URL`).
+Dataset sumber yang didukung:
+- Rumah: `jabodetabek_house.csv`, `Combined_Datalist_v1.1.csv`, `yogyakarta_house.csv`
+- Apartemen: `travelio2.csv`, `travelio3.csv`, `travelio4.csv`, `travelio5.csv`
 
-> Panduan deployment lengkap langkah-demi-langkah ada di **[PANDUAN_DEPLOY.md](./PANDUAN_DEPLOY.md)**.
+## Struktur penting
+- `backend/app/services/preprocess.py` → pembersihan, normalisasi, integrasi data
+- `backend/app/services/recommender.py` → hard constraint filtering, soft ranking, relaxation
+- `backend/app/services/evaluation.py` → NDCG, Precision, Recall, F1-score, CSR/VRR
+- `backend/app/static/` → antarmuka web
+- `scripts/build_dataset.py` → generate dataset gabungan
+- `scripts/evaluate.py` → evaluasi model
 
----
+## Cara menjalankan dengan Docker
+1. Letakkan file CSV asli ke folder:
+   `data/raw/`
+2. Jalankan:
+   ```bash
+   docker compose up -d --build
+   ```
+3. Buka:
+   `http://localhost:8000`
 
-## Arsitektur
-
-```
-                Pengguna (browser)
-                       │
-                       ▼
-        ┌──────────────────────────────┐
-        │   Vercel — Frontend Next.js   │   app/, components/, lib/
-        │   (UI, render, mode demo)     │
-        └──────────────┬───────────────┘
-                       │  fetch  NEXT_PUBLIC_API_URL/api/*
-                       ▼
-        ┌──────────────────────────────┐
-        │   Railway — Backend FastAPI   │   /api/recommend, /api/evaluate, ...
-        │   (mesin rekomendasi, pandas) │
-        └──────────────┬───────────────┘
-                       │  SQLAlchemy (DATABASE_URL)
-                       ▼
-        ┌──────────────────────────────┐
-        │   Railway — PostgreSQL plugin │
-        └──────────────────────────────┘
-```
-
-**Kenapa dipisah?** Mesin rekomendasi memakai `pandas`/`numpy` sehingga harus
-tetap berjalan sebagai layanan Python — tidak bisa ikut ke dalam bundle Next.js.
-Vercel menjadi tempat ideal untuk frontend, Railway untuk backend Python + database.
-
-### Mode demo (penting)
-
-Frontend dirancang **dua mode**:
-
-- Jika `NEXT_PUBLIC_API_URL` terisi dan backend hidup → memanggil API sungguhan.
-- Jika kosong atau backend tidak terjangkau → otomatis jatuh ke **mode demo**
-  dengan contoh data bawaan + peringkat sisi-klien.
-
-Artinya situs di Vercel **tetap berfungsi** walau backend belum dipasang.
-
----
-
-## Struktur folder
-
-```
-sistem_rekomendasi_properti_deploy/
-├── README.md                 ← file ini
-├── PANDUAN_DEPLOY.md         ← panduan deploy Vercel + Railway
-├── docker-compose.yml        ← menjalankan backend + db secara lokal
-│
-├── frontend/                 ← Next.js (deploy ke Vercel)
-│   ├── app/                  ← App Router: layout, halaman /, /evaluation
-│   ├── components/           ← Nav, Footer, MatchRing, halaman interaktif, dll.
-│   ├── lib/                  ← api.js, format.js, demo.js
-│   ├── package.json
-│   ├── tailwind.config.js
-│   ├── next.config.mjs
-│   └── .env.local.example    ← contoh konfigurasi NEXT_PUBLIC_API_URL
-│
-└── backend/                  ← FastAPI (deploy ke Railway)
-    ├── app/                  ← main.py, recommender, evaluation, dll.
-    ├── data/                 ← dataset (sudah dibundel ke dalam image)
-    ├── Dockerfile
-    ├── railway.json
-    └── requirements.txt
-```
-
----
-
-## Menjalankan secara lokal
-
-### Backend + database (Docker)
-
+## Cara build dataset gabungan manual
+Jika ingin membuat ulang dataset hasil preprocessing:
 ```bash
-docker compose up --build
-# API aktif di http://localhost:8000  (dok: http://localhost:8000/docs)
+docker compose exec api python scripts/build_dataset.py --raw-dir /app/data/raw --output /app/data/processed/properties_merged_cleaned.csv
+docker compose exec api python scripts/evaluate.py --data /app/data/processed/properties_merged_cleaned.csv --sample-size 100 --top-k 10
 ```
 
-### Frontend (Next.js)
+> Jika container masih memakai image lama (sebelum `PYTHONPATH=/app` ditambahkan)
+> dan muncul `ModuleNotFoundError: No module named 'app'`, jalankan sebagai modul
+> tanpa perlu rebuild:
+> ```bash
+> docker compose exec api python -m scripts.build_dataset --raw-dir /app/data/raw --output /app/data/processed/properties_merged_cleaned.csv
+> docker compose exec api python -m scripts.evaluate --data /app/data/processed/properties_merged_cleaned.csv --sample-size 100 --top-k 10
+> ```
 
-```bash
-cd frontend
-cp .env.local.example .env.local
-# isi: NEXT_PUBLIC_API_URL=http://localhost:8000
-npm install
-npm run dev
-# UI aktif di http://localhost:3000
-```
+## Panduan penggunaan web app
+1. Pilih tipe properti: **Rumah**, **Apartemen**, atau **Semua**.
+2. Pilih transaksi: **Jual Beli**, **Sewa**, atau **Semua**.
+3. Masukkan budget maksimum.
+4. Isi lokasi, kecamatan, minimal kamar, minimal kamar mandi, furnishing, kolam renang, daya listrik, dan luas bila diperlukan.
+5. Klik **Cari Rekomendasi**.
+6. Hasil ditampilkan dari ranking tertinggi ke terendah.
 
-Tanpa mengisi `.env.local`, frontend tetap jalan dalam **mode demo**.
+## Makna proses rekomendasi
+Urutan proses yang dipakai:
+1. **Hard constraint filtering**  
+   Memastikan properti memenuhi syarat utama seperti budget, tipe properti, lokasi, dan jumlah kamar.
+2. **Soft constraint ranking**  
+   Properti yang lolos disortir berdasarkan kedekatan harga, lokasi, kamar, furnishing, kolam renang, daya listrik, dan luas.
+3. **Constraint relaxation**  
+   Bila hasil terlalu sedikit, sistem melonggarkan batas secara bertahap.
 
----
+## Evaluasi
+Metode evaluasi yang tersedia:
+- **NDCG**
+- **Precision**
+- **Recall**
+- **F1-score**
+- **Constraint Satisfaction Rate / Valid Recommendation Rate**
 
-## Endpoint backend
+Catatan: karena dataset tidak memiliki label relevansi eksplisit, evaluasi dilakukan secara **query-based offline evaluation** dengan relevansi diturunkan dari kecocokan terhadap constraint pengguna.
 
-| Method | Path                | Keterangan                                   |
-| ------ | ------------------- | -------------------------------------------- |
-| GET    | `/api/health`       | Status + jumlah record (dipakai healthcheck) |
-| GET    | `/api/stats`        | Jumlah record, rentang harga, daftar kota    |
-| POST   | `/api/recommend`    | Rekomendasi dari preferensi pengguna         |
-| GET    | `/api/evaluate`     | Metrik NDCG/Precision/Recall/F1/CSR/VRR      |
-| POST   | `/api/reload`       | Muat ulang dataset ke database               |
+## Catatan data
+- Dataset rumah digunakan untuk **jual beli**.
+- Dataset apartemen Travelio digunakan untuk **sewa**.
+- Data dibersihkan dari missing value ekstrem, nilai tidak masuk akal, dan outlier harga/ukuran.
 
-Teknologi: **FastAPI · SQLAlchemy · PostgreSQL · pandas/numpy** (backend),
-**Next.js 14 · React 18 · Tailwind CSS 3** (frontend).
+## Endpoint API
+- `GET /api/health`
+- `GET /api/stats`
+- `POST /api/recommend`
+- `GET /api/evaluate`
+- `POST /api/reload`
