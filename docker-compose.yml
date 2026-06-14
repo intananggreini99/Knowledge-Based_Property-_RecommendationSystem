@@ -1,3 +1,8 @@
+# Local development stack (backend + database).
+# The Next.js frontend runs separately with `npm run dev` (see frontend/README
+# usage in PANDUAN_DEPLOY.md). In production the frontend lives on Vercel and
+# this backend lives on Railway.
+
 services:
   db:
     image: postgres:16-alpine
@@ -16,11 +21,10 @@ services:
       context: ./backend
     container_name: proprec-api
     environment:
+      # Local Postgres. The app auto-normalizes the scheme to psycopg2.
       DATABASE_URL: postgresql+psycopg2://proprec:proprec123@db:5432/proprec
-      PROCESSED_DATA_PATH: /app/data/processed/properties_merged_cleaned.csv
       CORS_ORIGINS: "*"
-    volumes:
-      - ./data:/app/data
+      PORT: "8000"
     ports:
       - "8000:8000"
     depends_on:

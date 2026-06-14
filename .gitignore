@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Node / Next.js (frontend has its own .gitignore too)
+node_modules/
+.next/
+out/
+
+# Env files
+.env
+.env*.local
+
+# OS / editor
+.DS_Store
+*.swp
+
+# Vercel
+.vercel
