@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import logging
+import threading
 from pathlib import Path
 from time import sleep
 from typing import List
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
@@ -17,11 +19,18 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .database import Base, engine, SessionLocal
 from .models import Property
-from .schemas import RecommendationRequest, RecommendationResponse, RecommendationItem, MetricsSummary
+from .schemas import (
+    RecommendationRequest,
+    RecommendationResponse,
+    RecommendationItem,
+    MetricsSummary,
+)
 from .services.preprocess import build_unified_dataset
 from .services.recommender import recommend
 from .services.evaluation import evaluate
 from .services.db_loader import load_dataframe_to_db
+
+logger = logging.getLogger("rumaku")
 
 app = FastAPI(title=settings.app_name, version=settings.app_version)
 
@@ -43,16 +52,15 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 DATAFRAME_CACHE: pd.DataFrame | None = None
 
+# ─── startup state ────────────────────────────────────────────────────────────
+# Threading event so the health endpoint can return 200 immediately while the
+# heavy init (DB wait + CSV load + seed) runs in the background.
+_init_done = threading.Event()
+_init_error: str | None = None          # set if background init crashed
+
 
 def _clean_scalar(value):
-    """Convert pandas/numpy missing values to ``None`` and numpy scalars to
-    native Python types.
-
-    CSV reads turn empty cells into float ``NaN``. Passing those straight into
-    Pydantic ``Optional[str]`` fields raises a validation error (a float is not
-    a string), which is why house listings — whose ``title``/``orientation``/…
-    are empty — used to make ``/api/recommend`` return HTTP 500.
-    """
+    """Convert pandas/numpy missing values to None and numpy scalars to Python types."""
     if isinstance(value, (list, tuple, dict, set)):
         return value
     try:
@@ -90,51 +98,98 @@ def _load_or_build_dataframe() -> pd.DataFrame:
     return df
 
 
-def _wait_for_db(max_attempts: int = 20, delay_seconds: float = 2.0) -> None:
+def _wait_for_db(max_attempts: int = 30, delay_seconds: float = 3.0) -> None:
+    """Retry until PostgreSQL is ready (up to ~90 s on first deploy)."""
     last_error = None
-    for _ in range(max_attempts):
+    for attempt in range(1, max_attempts + 1):
         try:
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
+            logger.info("DB ready after %d attempt(s)", attempt)
             return
         except OperationalError as exc:
             last_error = exc
+            logger.info("DB not ready yet (attempt %d/%d) — retrying in %ss",
+                        attempt, max_attempts, delay_seconds)
             sleep(delay_seconds)
-    raise RuntimeError(f"Database not ready after {max_attempts} attempts") from last_error
+    raise RuntimeError(
+        f"Database not ready after {max_attempts} attempts"
+    ) from last_error
+
+
+def _background_init() -> None:
+    """Heavy init that runs in a daemon thread.
+
+    The app starts accepting HTTP immediately; this thread handles:
+      1. Waiting for PostgreSQL to become available
+      2. Creating tables
+      3. Loading the CSV into memory
+      4. Seeding 12 946 rows into the DB (first deploy only)
+    """
+    global _init_error
+    try:
+        logger.info("Background init started")
+        _wait_for_db()
+        Base.metadata.create_all(bind=engine)
+
+        df = _load_or_build_dataframe()
+        if not df.empty:
+            with SessionLocal() as db:
+                count = db.query(Property).count()
+                if count == 0:
+                    logger.info("Seeding %d rows into the DB…", len(df))
+                    load_dataframe_to_db(db, df)
+                    logger.info("Seeding complete")
+                else:
+                    logger.info("DB already has %d rows — skip seeding", count)
+        logger.info("Background init complete")
+    except Exception as exc:
+        _init_error = str(exc)
+        logger.exception("Background init failed: %s", exc)
+    finally:
+        _init_done.set()        # always signal done (even on error)
 
 
 @app.on_event("startup")
-def on_startup():
-    _wait_for_db()
-    Base.metadata.create_all(bind=engine)
+def on_startup() -> None:
+    """Kick off background init and return immediately."""
+    t = threading.Thread(target=_background_init, daemon=True, name="rumaku-init")
+    t.start()
 
-    df = _load_or_build_dataframe()
-    if df.empty:
-        return
 
-    with SessionLocal() as db:
-        count = db.query(Property).count()
-        if count == 0:
-            load_dataframe_to_db(db, df)
-
+# ─── routes ───────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    index_path = STATIC_DIR / "index.html"
-    return index_path.read_text(encoding="utf-8")
+    return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
 
 @app.get("/evaluation", response_class=HTMLResponse)
 def evaluation_page():
-    eval_path = STATIC_DIR / "evaluation.html"
-    return eval_path.read_text(encoding="utf-8")
+    return (STATIC_DIR / "evaluation.html").read_text(encoding="utf-8")
 
 
 @app.get("/api/health")
 def health():
+    """Lightweight health endpoint — responds immediately, even during init.
+
+    Returns 200 with status="starting" while seeding is in progress so Railway
+    considers the deployment healthy and keeps retrying user requests normally.
+    Returns 200 with status="ok" once fully ready.
+    Returns 503 if background init crashed.
+    """
+    if _init_error:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "detail": _init_error},
+        )
+    if not _init_done.is_set():
+        return {"status": "starting", "ready": False}
+
     df = _load_or_build_dataframe()
     return {
         "status": "ok",
+        "ready": True,
         "records": int(len(df)),
         "property_types": df["property_type"].value_counts(dropna=False).to_dict(),
         "transaction_types": df["transaction_type"].value_counts(dropna=False).to_dict(),
@@ -149,7 +204,9 @@ def stats():
         "price_min": float(df["price_rp"].min()),
         "price_median": float(df["price_rp"].median()),
         "price_max": float(df["price_rp"].max()),
-        "cities": sorted([c for c in df["city"].dropna().astype(str).unique().tolist()])[:25],
+        "cities": sorted(
+            [c for c in df["city"].dropna().astype(str).unique().tolist()]
+        )[:25],
     }
 
 
